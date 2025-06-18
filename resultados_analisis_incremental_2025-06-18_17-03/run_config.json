@@ -1,0 +1,25 @@
+{
+    "arguments": {
+        "tensor_dir": "/home/diego/Escritorio/desde_cero/AAL3_Tesis_Refactored_v7_131ROIs_6Ch_ROIreordered/individual_tensors",
+        "metadata": "/home/diego/Escritorio/desde_cero/SubjectsData_cleaned.csv",
+        "roi_meta": "/home/diego/Escritorio/desde_cero/ROI_MNI_V7_vol.txt",
+        "outdir": "resultados_analisis_incremental_2025-06-18_17-03",
+        "label_col": "ResearchGroup",
+        "covariates": null,
+        "top_k": 2500,
+        "skip_network": false
+    },
+    "versions": {
+        "numpy": "1.26.3",
+        "pandas": "2.2.3",
+        "scikit-learn": "1.2.2",
+        "torch": "2.4.0+cu118",
+        "captum": "0.8.0",
+        "umap-learn": "0.5.7",
+        "nilearn": "0.10.3",
+        "networkx": "2.6.3",
+        "statsmodels": "0.14.0",
+        "seaborn": "0.12.2",
+        "matplotlib": "3.8.0"
+    }
+}
