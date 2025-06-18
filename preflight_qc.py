@@ -59,6 +59,8 @@ logger = logging.getLogger(__name__)
 
 # --- Funciones de Validación de Atlas ---
 
+# --- Funciones de Validación de Atlas ---
+
 def check_atlas_integrity(aal3_path: Path, output_dir: Path) -> Dict[str, Any]:
     """
     Verifica la integridad y alineación entre los atlas AAL3 y Yeo-17.
@@ -70,14 +72,10 @@ def check_atlas_integrity(aal3_path: Path, output_dir: Path) -> Dict[str, Any]:
     Returns:
         Dict[str, Any]: Un diccionario con el reporte de la validación.
     """
-    logger.info("--- 1. Verificando Integridad y Alineación de Atlas ---")
+    logger.info("--- 1. Verificando Integridad y Alineación de Atlas (Versión Corregida) ---")
     report = {
-        "aal3_exists": False,
-        "yeo_fetched": False,
-        "atlases_match_geometry": None,
-        "affine_mismatch": None,
-        "shape_mismatch": None,
-        "dice_score": None,
+        "aal3_exists": False, "yeo_fetched": False, "atlases_match_geometry": None,
+        "affine_mismatch": None, "shape_mismatch": None, "dice_score": None,
         "visual_check_plot_path": None
     }
 
@@ -89,7 +87,17 @@ def check_atlas_integrity(aal3_path: Path, output_dir: Path) -> Dict[str, Any]:
     try:
         logger.info("Descargando/cargando atlas Yeo-17...")
         yeo_atlas = fetch_atlas_yeo_2011()
-        yeo_img = nib.load(yeo_atlas.thick_17)
+        yeo_img_4d = nib.load(yeo_atlas.thick_17)
+        
+        # --- INICIO DE LA CORRECCIÓN ---
+        # Asegurarse de que el atlas Yeo que usamos para la comparación es 3D
+        if yeo_img_4d.ndim > 3:
+            logger.warning(f"El atlas Yeo-17 es 4D (shape: {yeo_img_4d.shape}). Se seleccionará el primer volumen (3D).")
+            yeo_img = nli_image.index_img(yeo_img_4d, 0)
+        else:
+            yeo_img = yeo_img_4d
+        # --- FIN DE LA CORRECCIÓN ---
+            
         report["yeo_fetched"] = True
     except Exception as e:
         logger.error(f"Fallo al descargar/cargar el atlas Yeo-17: {e}", exc_info=True)
@@ -97,9 +105,8 @@ def check_atlas_integrity(aal3_path: Path, output_dir: Path) -> Dict[str, Any]:
 
     aal_img = nib.load(aal3_path)
     logger.info(f"AAL3 Shape: {aal_img.shape}, Affine: \n{np.round(aal_img.affine[:3, :], 2)}")
-    logger.info(f"Yeo-17 Shape: {yeo_img.shape}, Affine: \n{np.round(yeo_img.affine[:3, :], 2)}")
+    logger.info(f"Yeo-17 (3D) Shape: {yeo_img.shape}, Affine: \n{np.round(yeo_img.affine[:3, :], 2)}")
 
-    # Comprobar si la geometría coincide
     affine_match = np.allclose(aal_img.affine, yeo_img.affine, atol=1e-3)
     shape_match = aal_img.shape == yeo_img.shape
     report["affine_mismatch"] = not affine_match
@@ -109,30 +116,46 @@ def check_atlas_integrity(aal3_path: Path, output_dir: Path) -> Dict[str, Any]:
     if report["atlases_match_geometry"]:
         logger.info("Geometría de atlas (affine y shape) coinciden. No se requiere remuestreo.")
         aal_data_for_comparison = aal_img.get_fdata()
-        bg_img_for_plot = aal_img # Usar AAL3 como fondo si coinciden
+        bg_img_for_plot = aal_img
     else:
-        logger.warning("La geometría no coincide. Se remuestreará AAL3 a Yeo solo para comparación.")
+        logger.warning("La geometría no coincide. Se remuestreará AAL3 a la geometría 3D de Yeo para comparación.")
         try:
             aal_resampled = nli_image.resample_to_img(aal_img, yeo_img, interpolation='nearest')
             aal_data_for_comparison = aal_resampled.get_fdata()
-            bg_img_for_plot = yeo_img # Usar Yeo como fondo para ver la alineación
+            bg_img_for_plot = yeo_img
         except Exception as e:
             logger.error(f"Fallo al remuestrear AAL3: {e}", exc_info=True)
             return report
 
-    # Calcular solapamiento de máscaras cerebrales (Dice Score)
+    # --- INICIO DE LA CORRECCIÓN EN EL CÁLCULO ---
+    # Ahora 'yeo_img' es garantizadamente 3D, por lo que el cálculo será correcto.
     aal_mask = aal_data_for_comparison > 0
     yeo_mask = yeo_img.get_fdata() > 0
-    intersection = np.sum(aal_mask & yeo_mask)
-    dice = (2. * intersection) / (np.sum(aal_mask) + np.sum(yeo_mask))
+    
+    sum_aal = np.sum(aal_mask)
+    sum_yeo = np.sum(yeo_mask)
+    
+    if sum_aal == 0 or sum_yeo == 0:
+        logger.warning("Una de las máscaras de los atlas está vacía. El Dice Score será 0.")
+        dice = 0.0
+        intersection = 0
+    else:
+        intersection = np.sum(aal_mask & yeo_mask)
+        # Asegurarse de usar floats para la división para evitar errores.
+        dice = (2. * float(intersection)) / (float(sum_aal) + float(sum_yeo))
+    
+    # Se agrega un log para depuración que muestra los valores intermedios.
+    logger.info(f"Valores para cálculo de Dice: Intersection={intersection}, Sum(AAL_Mask)={sum_aal}, Sum(Yeo_Mask)={sum_yeo}")
+    
     report["dice_score"] = dice
-    logger.info(f"Coeficiente de Dice entre máscaras AAL3 y Yeo-17: {dice:.4f}")
+    logger.info(f"Coeficiente de Dice (corregido) entre máscaras AAL3 y Yeo-17: {dice:.4f}")
+    # --- FIN DE LA CORRECCIÓN EN EL CÁLCULO ---
 
-    # Visualización de una ROI para confirmación manual
+    # La sección de visualización no necesita cambios
     try:
         fig, ax = plt.subplots(figsize=(10, 5))
-        roi_color_to_plot = 1  # Precentral_L, una ROI grande y robusta
-        roi_mask_img = nli_image.math_img(f"img == {roi_color_to_plot}", img=aal_img)
+        roi_color_to_plot = 1
+        roi_mask_img = nli_image.math_img("img == 1", img=aal_img)
         
         display = nli_plotting.plot_roi(
             roi_mask_img, bg_img=bg_img_for_plot,
